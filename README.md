@@ -1,5 +1,5 @@
 
-ixa-pipe-tok
+ixa-pipe-tok a
 ============
 
 ixa-pipe-tok is a multilingual rule-based tokenizer and sentence segmenter.
