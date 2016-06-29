@@ -27,6 +27,8 @@ import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.StringReader;
 import java.util.Properties;
+import java.io.File;
+import java.io.FileWriter;
 
 import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.impl.Arguments;
@@ -96,7 +98,6 @@ public class CLI {
 
   public static void main(final String[] args) throws IOException,
       JDOMException {
-
     final CLI cmdLine = new CLI();
     cmdLine.parseCLI(args);
   }
@@ -137,12 +138,86 @@ public class CLI {
     final Boolean inputKafRaw = parsedArguments.getBoolean("inputkaf");
     final Boolean noTok = parsedArguments.getBoolean("notok");
     final String hardParagraph = parsedArguments.getString("hardParagraph");
+    final Boolean serverMode = parsedArguments.getBoolean("server");
     final Properties properties = setAnnotateProperties(lang, normalize, untokenizable, hardParagraph);
 
+    IXAdaemon.sendINIT();
     BufferedReader breader = null;
     final BufferedWriter bwriter = new BufferedWriter(new OutputStreamWriter(
         System.out, "UTF-8"));
-    KAFDocument kaf;
+     
+   
+	  IXAdaemon.sendRUN();
+    KAFDocument kaf = null;
+
+    if (serverMode) {
+      annotate_server(outputFormat, properties, kafVersion, lang, kaf, noTok, inputKafRaw, breader, bwriter);
+    }else{
+      annotate_noserver(outputFormat, properties, kafVersion, lang, kaf, noTok, inputKafRaw, breader, bwriter);
+    }
+  }
+
+  private void annotate_server(String outputFormat, Properties properties, String kafVersion, String lang, KAFDocument kaf, Boolean noTok,
+                                     Boolean inputKafRaw, BufferedReader breader, BufferedWriter bwriter) throws IOException, JDOMException {
+    while (true){
+    
+      if (noTok) {
+        final BufferedReader noTokReader = new BufferedReader(
+            new InputStreamReader(System.in, "UTF-8"));
+        kaf = new KAFDocument(lang, kafVersion);
+        final KAFDocument.LinguisticProcessor newLp = kaf.addLinguisticProcessor(
+            "text", "ixa-pipe-tok-notok-" + lang, version + "-" + commit);
+        newLp.setBeginTimestamp();
+        Annotate.tokensToKAF(noTokReader, kaf);
+        newLp.setEndTimestamp();
+        bwriter.write(kaf.toString());
+        noTokReader.close();
+      } else {
+        if (inputKafRaw) {
+          kaf = null;
+          final BufferedReader kafReader = new BufferedReader(
+            new InputStreamReader(System.in, "UTF-8"));
+          kaf = IXAdaemon.inputKafDocument(kafReader);
+          System.err.println("lortu da kaf dokumentua");
+          if (kaf == null) {
+            System.err.println("STDIN closed. Exiting.");
+            System.exit(1);
+          }
+          final String text = kaf.getRawText();
+          final StringReader stringReader = new StringReader(text);
+          breader = new BufferedReader(stringReader);
+        } else {
+          kaf = new KAFDocument(lang, kafVersion);
+          breader = new BufferedReader(new InputStreamReader(System.in, "UTF-8"));
+        }
+        final Annotate annotator = new Annotate(breader, properties);
+        if (outputFormat.equalsIgnoreCase("conll")) {
+          if (parsedArguments.getBoolean("offsets")) {
+            bwriter.write(annotator.tokenizeToCoNLL());
+          } else {
+            bwriter.write(annotator.tokenizeToCoNLLOffsets());
+          }
+        } else if (outputFormat.equalsIgnoreCase("oneline")) {
+          bwriter.write(annotator.tokenizeToText());
+        } else {
+          final KAFDocument.LinguisticProcessor newLp = kaf
+              .addLinguisticProcessor("text", "ixa-pipe-tok-" + lang, version
+                  + "-" + commit);
+          newLp.setBeginTimestamp();
+          annotator.tokenizeToKAF(kaf);
+          newLp.setEndTimestamp();
+          bwriter.write(kaf.toString());
+          bwriter.write("[IXAdaemon]EOD\n");
+          bwriter.flush();
+        }
+        breader.close();
+      }
+    }
+  }
+    
+
+  private void annotate_noserver (String outputFormat, Properties properties, String kafVersion, String lang, KAFDocument kaf, Boolean noTok,
+                                     Boolean inputKafRaw, BufferedReader breader, BufferedWriter bwriter) throws IOException, JDOMException {
 
     if (noTok) {
       final BufferedReader noTokReader = new BufferedReader(
@@ -245,6 +320,11 @@ public class CLI {
     annotateParser.addArgument("--kafversion")
          .setDefault("v1.naf")
         .help("Set kaf document version.\n");
+    annotateParser
+    .addArgument("-server", "--server")
+    .action(Arguments.storeTrue())
+    .help(
+      "Choose if you want to run the tokenizer as a server");
   }
 
   private Properties setAnnotateProperties(final String lang, final String normalize, final String untokenizable, final String hardParagraph) {
